@@ -25,11 +25,19 @@
 #define MAX_IPV4_LEN      (16)
 #define BLOCK_BUF_SIZE    (1024)
 
-int create_tcp_socket(unsigned short port);
+int create_tcp_socket(const char *address, unsigned short port);
 int recv_tcp_data(int fd, char **data, int *len);
 int set_fd_unblock(int fd);
 
 int serv_socket = -1;
+
+typedef struct
+{
+    int buf_len;
+    int buf_flu;
+    char *buf;
+    char data[0];
+} recv_buf;
 
 
 
@@ -87,17 +95,19 @@ int main(int argc, char **argv)
     //注册中断信号
 	//signal(SIGQUIT, signal_handler);
     
-    nRet = create_tcp_socket(11111);
+    nRet = create_tcp_socket("192.168.0.35", 11111);
+    
     if (nRet != SOCKET_SUC)
     {
         __free__();
         exit(1);
     }
     printf("start recv\n");
-    
-    recv_tcp_data(serv_socket, &buf, &recv_len);
 
-    printf("msg:%s\n", buf);
+    while (1) {
+        recv_tcp_data(serv_socket, &buf, &recv_len);
+        printf("msg:%s\n", buf);
+    }
 
     
     __free__();
@@ -113,9 +123,10 @@ int recv_tcp_data(int fd, char **data, int *len)
     struct sockaddr_in cli_addr;
     socklen_t addr_len;
     int cli_fd = -1;
-    int data_len, buf_len, max_buf;
+    int data_len, buf_len, curr_buf_len = 0 /*, max_buf */;
     char ipv4[MAX_IPV4_LEN];
-    char *buf;
+    /* char *buf; */
+    recv_buf buf;
     
     cli_fd = accept(fd, (struct sockaddr*)&cli_addr, &addr_len);
         
@@ -128,26 +139,38 @@ int recv_tcp_data(int fd, char **data, int *len)
     if (cli_fd < 0)
         goto ERR_SOCKET;
 
-    buf = (char*)calloc(1, BLOCK_BUF_SIZE);
-    max_buf  = BLOCK_BUF_SIZE;
+    //buf = (char*)calloc(1, BLOCK_BUF_SIZE);
+    memset(&buf, 0, sizeof(recv_buf));
+    buf.buf_flu = BLOCK_BUF_SIZE;
+    buf.buf_len = BLOCK_BUF_SIZE;
+    buf.buf = (char*)calloc(1, BLOCK_BUF_SIZE);
+    
+    //max_buf  = BLOCK_BUF_SIZE;
     //set_fd_unblock(cli_fd);
     
     while(1) {
-        buf_len = recv(cli_fd, buf, BLOCK_BUF_SIZE, 0);
-        buf[buf_len] = 0;
-        printf("buf len:%u\n%s\n", buf_len, buf);
+        buf_len = recv(cli_fd, &buf.buf[curr_buf_len], BLOCK_BUF_SIZE, 0);
+        printf("buf len:%u\n", buf_len);
+        curr_buf_len += buf_len;
         if (buf_len < 0)
             goto ERR_SOCKET;
         else if (buf_len == 0)
             break;
         else {
-            buf[buf_len] = '\0';
-            //break;
+            buf.buf_flu -= buf_len;
+            if (buf.buf_flu <= 0) {
+                printf("before realloc:%d, realloc:%d", buf.buf_len, buf.buf_len + BLOCK_BUF_SIZE);
+                buf.buf = (char*)realloc(buf.buf, buf.buf_len + BLOCK_BUF_SIZE);
+                buf.buf_len += BLOCK_BUF_SIZE;
+                buf.buf_flu += BLOCK_BUF_SIZE;
+            }
         }
+        if(buf_len < BLOCK_BUF_SIZE);
+            break;
     }
 
-    *data = buf;
-    *len  = buf_len;
+    *data = buf.buf;
+    *len  = buf.buf_len - buf.buf_flu;
 
     close(cli_fd);
     return SOCKET_SUC;
@@ -165,7 +188,7 @@ ERR_SOCKET:
     return SOCKET_ERR;
 }
 
-int create_tcp_socket(unsigned short port)
+int create_tcp_socket(const char *address, unsigned short port)
 {
     struct sockaddr_in addr;
     int nRet;
@@ -179,7 +202,17 @@ int create_tcp_socket(unsigned short port)
     
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (NULL == address) 
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    else {
+        //绑定只有IP，不能绑定域名
+        nRet = inet_pton(AF_INET, address, &addr.sin_addr);
+        if (nRet != 1)
+            goto ERR;
+
+    }
+    
     addr.sin_port = htons(port);
 
     if  (bind(serv_socket, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
