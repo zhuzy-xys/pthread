@@ -17,6 +17,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "httplib.h"
+
 
 #define SOCKET_SUC        (0)         /* socket success */
 #define SOCKET_ERR        (-1)         /* socket err */
@@ -106,7 +108,7 @@ int main(int argc, char **argv)
 
     while (1) {
         recv_tcp_data(serv_socket, &buf, &recv_len);
-        printf("msg:%s\n", buf);
+        //printf("msg:%s\n", buf);
     }
 
     
@@ -123,10 +125,11 @@ int recv_tcp_data(int fd, char **data, int *len)
     struct sockaddr_in cli_addr;
     socklen_t addr_len;
     int cli_fd = -1;
-    int data_len, buf_len, curr_buf_len = 0 /*, max_buf */;
+    int data_len, buf_len, curr_buf_len = 0 /*, max_buf */, nRecv;
     char ipv4[MAX_IPV4_LEN];
     /* char *buf; */
-    recv_buf buf;
+    //recv_buf buf;
+    char buf[BLOCK_BUF_SIZE];
     
     cli_fd = accept(fd, (struct sockaddr*)&cli_addr, &addr_len);
         
@@ -138,40 +141,31 @@ int recv_tcp_data(int fd, char **data, int *len)
     printf("client addr->ip:%s, port:%d\n", ipv4, ntohs(cli_addr.sin_port));
     if (cli_fd < 0)
         goto ERR_SOCKET;
-
+    
     //buf = (char*)calloc(1, BLOCK_BUF_SIZE);
-    memset(&buf, 0, sizeof(recv_buf));
+
+    struct http_req_header header;
+    
+    memset(buf, 0, sizeof(buf));
+    /*
     buf.buf_flu = BLOCK_BUF_SIZE;
     buf.buf_len = BLOCK_BUF_SIZE;
     buf.buf = (char*)calloc(1, BLOCK_BUF_SIZE);
-    
+    */
     //max_buf  = BLOCK_BUF_SIZE;
     //set_fd_unblock(cli_fd);
     
-    while(1) {
-        buf_len = recv(cli_fd, &buf.buf[curr_buf_len], BLOCK_BUF_SIZE, 0);
-        printf("buf len:%u\n", buf_len);
-        curr_buf_len += buf_len;
-        if (buf_len < 0)
-            goto ERR_SOCKET;
-        else if (buf_len == 0)
-            break;
-        else {
-            buf.buf_flu -= buf_len;
-            if (buf.buf_flu <= 0) {
-                printf("before realloc:%d, realloc:%d", buf.buf_len, buf.buf_len + BLOCK_BUF_SIZE);
-                buf.buf = (char*)realloc(buf.buf, buf.buf_len + BLOCK_BUF_SIZE);
-                buf.buf_len += BLOCK_BUF_SIZE;
-                buf.buf_flu += BLOCK_BUF_SIZE;
-            }
+    //while(1) {
+        nRecv = parse_http_request_header(cli_fd, &header);
+        printf("nRecv:%d\n", (int)header.method);
+
+        if (GET == header.method) {
+            send_http_response_header(cli_fd, &header);
         }
-        if(buf_len < BLOCK_BUF_SIZE);
-            break;
-    }
+        //break;
+    //}
 
-    *data = buf.buf;
-    *len  = buf.buf_len - buf.buf_flu;
-
+    printf("close\n");
     close(cli_fd);
     return SOCKET_SUC;
 
